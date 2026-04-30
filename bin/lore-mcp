@@ -1,0 +1,15 @@
+#!/bin/sh
+# Launcher for the Lore MCP server. Claude Code spawns this via stdio.
+#
+# All logging goes to stderr (LoreMcp.Application redirects :default logger
+# to :standard_error). stdout is reserved for JSON-RPC traffic.
+
+set -e
+
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$DIR"
+
+# Use `mix run --no-halt` so the supervisor stays up. MIX_QUIET silences the
+# "Compiling..." banner that mix prints on first run; subsequent launches are
+# instant from the build cache.
+exec env MIX_QUIET=1 ELIXIR_ERL_OPTIONS="+sbwt none" mix run --no-halt --no-compile
