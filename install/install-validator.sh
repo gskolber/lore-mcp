@@ -98,6 +98,7 @@ PROJECT="$(pwd)"
       --append-system-prompt \"\$SKILL\" \
       --mcp-config '$MCP_CONFIG' \
       --strict-mcp-config \
+      --allowed-tools \"mcp__lore__search mcp__lore__read mcp__lore__validate mcp__lore__detect_repo mcp__lore__write mcp__lore__link_files\" \
       --print \
       \"\$PROMPT\" \
       >> '$LOG' 2>&1 || true
