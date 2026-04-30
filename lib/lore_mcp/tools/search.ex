@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.Search do
   alias LoreMcp.ApiClient
 
   @impl true
-  def name, do: "lore.search"
+  def name, do: "search"
 
   @impl true
   def description,

@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.DetectRepo do
   alias LoreMcp.Git
 
   @impl true
-  def name, do: "lore.detect_repo"
+  def name, do: "detect_repo"
 
   @impl true
   def description do

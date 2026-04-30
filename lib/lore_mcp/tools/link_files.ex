@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.LinkFiles do
   alias LoreMcp.{ApiClient, Git}
 
   @impl true
-  def name, do: "lore.link_files"
+  def name, do: "link_files"
 
   @impl true
   def description do

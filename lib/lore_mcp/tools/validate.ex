@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.Validate do
   alias LoreMcp.ApiClient
 
   @impl true
-  def name, do: "lore.validate"
+  def name, do: "validate"
 
   @impl true
   def description do

@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.Write do
   alias LoreMcp.{ApiClient, Git}
 
   @impl true
-  def name, do: "lore.write"
+  def name, do: "write"
 
   @impl true
   def description do

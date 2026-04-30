@@ -4,7 +4,7 @@ defmodule LoreMcp.Tools.Read do
   alias LoreMcp.ApiClient
 
   @impl true
-  def name, do: "lore.read"
+  def name, do: "read"
 
   @impl true
   def description,
