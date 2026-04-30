@@ -41,12 +41,8 @@ fi
 cat > .claude/hooks/lore-validate.sh <<'HOOK'
 #!/bin/bash
 # Stop-hook: fires when Claude Code finishes a task. Spawns the validator
-# sub-agent in the background so the user is not blocked.
-#
-# The sub-agent reads the recent git diff and decides whether to file a
-# finding via the lore.validate MCP tool. We isolate the spawn to ONLY
-# the lore MCP server (--strict-mcp-config) so other MCPs (Snowflake,
-# Gmail, etc.) don't trigger OAuth flows when the hook fires.
+# sub-agent fully detached from this hook's I/O so Claude Code doesn't
+# wait minutes for the hook to "finish".
 
 set -e
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -54,17 +50,15 @@ cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || cd "$(git rev-parse --show-toplevel 2>/d
 DIFF=$(git diff --unified=3 HEAD 2>/dev/null || true)
 [ -z "$DIFF" ] && exit 0
 
-# Cap the diff at 4000 chars to keep the validator's token budget viable.
 DIFF=$(echo "$DIFF" | head -c 4000)
 
 LOG=".claude/lore-validator.log"
 SKILL_FILE=".claude/skills/lore-validator.md"
 [ ! -f "$SKILL_FILE" ] && { echo "[$(date)] skill missing" >> "$LOG"; exit 0; }
-SKILL=$(cat "$SKILL_FILE")
 
-# Build a minimal MCP config containing ONLY the lore server.
-MCP_CONFIG=$(mktemp -t lore-mcp-XXXXXX.json)
-trap "rm -f '$MCP_CONFIG'" EXIT
+MCP_CONFIG=".claude/lore-validator-mcp.json"
+PROMPT_FILE=".claude/lore-validator-prompt.txt"
+DIFF_FILE=".claude/lore-validator-diff.txt"
 
 python3 - "$MCP_CONFIG" <<'PY'
 import json, pathlib, sys
@@ -78,24 +72,36 @@ lore = (data.get("mcpServers") or {}).get("lore")
 out.write_text(json.dumps({"mcpServers": {"lore": lore} if lore else {}}))
 PY
 
-PROMPT="Validate this git diff against the Lore wiki. File at most one finding via lore.validate. Silence is preferred — only file if confidence is at or above the threshold defined in your system prompt.
+printf '%s' "$DIFF" > "$DIFF_FILE"
+{
+  echo "Validate this git diff against the Lore wiki. File at most one finding via mcp__lore__validate. Silence is preferred — only file if confidence is at or above the threshold defined in your system prompt."
+  echo
+  echo '```diff'
+  cat "$DIFF_FILE"
+  echo '```'
+} > "$PROMPT_FILE"
 
-\`\`\`diff
-${DIFF}
-\`\`\`"
+DIFF_BYTES=$(wc -c < "$DIFF_FILE" | tr -d ' ')
+PROJECT="$(pwd)"
 
-(
-  echo "[$(date)] firing validator (diff $(echo "$DIFF" | wc -c) bytes)" >> "$LOG"
+# Fully detach from this hook's I/O. Claude Code's hook runner blocks
+# until inherited fds close — `&` + `disown` alone leaves the spawn
+# sharing fds with the parent.
+nohup setsid bash -c "
+  cd '$PROJECT'
+  echo \"[\$(date)] firing validator (diff $DIFF_BYTES bytes)\" >> '$LOG'
+  SKILL=\$(cat '$SKILL_FILE')
+  PROMPT=\$(cat '$PROMPT_FILE')
   claude \
-    --append-system-prompt "$SKILL" \
-    --mcp-config "$MCP_CONFIG" \
+    --append-system-prompt \"\$SKILL\" \
+    --mcp-config '$MCP_CONFIG' \
     --strict-mcp-config \
     --print \
-    "$PROMPT" \
-    >> "$LOG" 2>&1 || true
-  echo "[$(date)] validator done" >> "$LOG"
-  rm -f "$MCP_CONFIG"
-) &
+    \"\$PROMPT\" \
+    >> '$LOG' 2>&1 || true
+  echo \"[\$(date)] validator done\" >> '$LOG'
+  rm -f '$MCP_CONFIG' '$PROMPT_FILE' '$DIFF_FILE'
+" </dev/null >/dev/null 2>&1 &
 disown
 
 exit 0
