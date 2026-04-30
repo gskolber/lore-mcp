@@ -84,25 +84,27 @@ printf '%s' "$DIFF" > "$DIFF_FILE"
 DIFF_BYTES=$(wc -c < "$DIFF_FILE" | tr -d ' ')
 PROJECT="$(pwd)"
 
-# Fully detach from this hook's I/O. Claude Code's hook runner blocks
-# until inherited fds close — `&` + `disown` alone leaves the spawn
-# sharing fds with the parent.
-nohup setsid bash -c "
-  cd '$PROJECT'
-  echo \"[\$(date)] firing validator (diff $DIFF_BYTES bytes)\" >> '$LOG'
-  SKILL=\$(cat '$SKILL_FILE')
-  PROMPT=\$(cat '$PROMPT_FILE')
-  claude \
-    --append-system-prompt \"\$SKILL\" \
-    --mcp-config '$MCP_CONFIG' \
-    --strict-mcp-config \
-    --print \
-    \"\$PROMPT\" \
-    >> '$LOG' 2>&1 || true
-  echo \"[\$(date)] validator done\" >> '$LOG'
-  rm -f '$MCP_CONFIG' '$PROMPT_FILE' '$DIFF_FILE'
-" </dev/null >/dev/null 2>&1 &
-disown
+# Fully detach the spawn so Claude Code's hook runner doesn't block
+# waiting on inherited fds. Double-fork (`( cmd & )`) orphans the spawn
+# to init; explicit redirects close the inherited fds. Portable across
+# macOS (no setsid) and Linux.
+(
+  nohup bash -c "
+    cd '$PROJECT'
+    echo \"[\$(date)] firing validator (diff $DIFF_BYTES bytes)\" >> '$LOG'
+    SKILL=\$(cat '$SKILL_FILE')
+    PROMPT=\$(cat '$PROMPT_FILE')
+    claude \
+      --append-system-prompt \"\$SKILL\" \
+      --mcp-config '$MCP_CONFIG' \
+      --strict-mcp-config \
+      --print \
+      \"\$PROMPT\" \
+      >> '$LOG' 2>&1 || true
+    echo \"[\$(date)] validator done\" >> '$LOG'
+    rm -f '$MCP_CONFIG' '$PROMPT_FILE' '$DIFF_FILE'
+  " < /dev/null > /dev/null 2>&1 &
+)
 
 exit 0
 HOOK
