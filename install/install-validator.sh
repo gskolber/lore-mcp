@@ -44,26 +44,39 @@ cat > .claude/hooks/lore-validate.sh <<'HOOK'
 # sub-agent in the background so the user is not blocked.
 #
 # The sub-agent reads the recent git diff and decides whether to file a
-# finding via the lore.validate MCP tool. The lore-validator skill is
-# injected as a system prompt so the persona governs every reply.
+# finding via the lore.validate MCP tool. We isolate the spawn to ONLY
+# the lore MCP server (--strict-mcp-config) so other MCPs (Snowflake,
+# Gmail, etc.) don't trigger OAuth flows when the hook fires.
 
 set -e
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 DIFF=$(git diff --unified=3 HEAD 2>/dev/null || true)
-if [ -z "$DIFF" ]; then
-  exit 0
-fi
+[ -z "$DIFF" ] && exit 0
 
-# Cap the diff at 4000 chars to avoid blowing token budget on huge changes.
+# Cap the diff at 4000 chars to keep the validator's token budget viable.
 DIFF=$(echo "$DIFF" | head -c 4000)
 
+LOG=".claude/lore-validator.log"
 SKILL_FILE=".claude/skills/lore-validator.md"
-if [ ! -f "$SKILL_FILE" ]; then
-  echo "[$(date)] lore-validator: skill file missing at $SKILL_FILE" >> .claude/lore-validator.log
-  exit 0
-fi
+[ ! -f "$SKILL_FILE" ] && { echo "[$(date)] skill missing" >> "$LOG"; exit 0; }
 SKILL=$(cat "$SKILL_FILE")
+
+# Build a minimal MCP config containing ONLY the lore server.
+MCP_CONFIG=$(mktemp -t lore-mcp-XXXXXX.json)
+trap "rm -f '$MCP_CONFIG'" EXIT
+
+python3 - "$MCP_CONFIG" <<'PY'
+import json, pathlib, sys
+out = pathlib.Path(sys.argv[1])
+home = pathlib.Path.home() / ".claude.json"
+if not home.exists():
+    out.write_text('{"mcpServers": {}}')
+    sys.exit(0)
+data = json.loads(home.read_text())
+lore = (data.get("mcpServers") or {}).get("lore")
+out.write_text(json.dumps({"mcpServers": {"lore": lore} if lore else {}}))
+PY
 
 PROMPT="Validate this git diff against the Lore wiki. File at most one finding via lore.validate. Silence is preferred — only file if confidence is at or above the threshold defined in your system prompt.
 
@@ -72,14 +85,18 @@ ${DIFF}
 \`\`\`"
 
 (
-  echo "[$(date)] firing validator (diff $(echo "$DIFF" | wc -c) bytes)" >> .claude/lore-validator.log
+  echo "[$(date)] firing validator (diff $(echo "$DIFF" | wc -c) bytes)" >> "$LOG"
   claude \
     --append-system-prompt "$SKILL" \
+    --mcp-config "$MCP_CONFIG" \
+    --strict-mcp-config \
     --print \
     "$PROMPT" \
-    >> .claude/lore-validator.log 2>&1 || true
-  echo "[$(date)] validator done" >> .claude/lore-validator.log
+    >> "$LOG" 2>&1 || true
+  echo "[$(date)] validator done" >> "$LOG"
+  rm -f "$MCP_CONFIG"
 ) &
+disown
 
 exit 0
 HOOK
