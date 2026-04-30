@@ -43,9 +43,9 @@ cat > .claude/hooks/lore-validate.sh <<'HOOK'
 # Stop-hook: fires when Claude Code finishes a task. Spawns the validator
 # sub-agent in the background so the user is not blocked.
 #
-# The sub-agent is an instance of `claude` (Claude Code CLI) with the
-# lore-validator skill auto-applied. It reads the recent git diff and
-# decides whether to file a finding via the lore.validate MCP tool.
+# The sub-agent reads the recent git diff and decides whether to file a
+# finding via the lore.validate MCP tool. The lore-validator skill is
+# injected as a system prompt so the persona governs every reply.
 
 set -e
 cd "$CLAUDE_PROJECT_DIR" 2>/dev/null || cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -58,15 +58,27 @@ fi
 # Cap the diff at 4000 chars to avoid blowing token budget on huge changes.
 DIFF=$(echo "$DIFF" | head -c 4000)
 
-# Run silently in background; output goes to a log for debugging.
+SKILL_FILE=".claude/skills/lore-validator.md"
+if [ ! -f "$SKILL_FILE" ]; then
+  echo "[$(date)] lore-validator: skill file missing at $SKILL_FILE" >> .claude/lore-validator.log
+  exit 0
+fi
+SKILL=$(cat "$SKILL_FILE")
+
+PROMPT="Validate this git diff against the Lore wiki. File at most one finding via lore.validate. Silence is preferred — only file if confidence is at or above the threshold defined in your system prompt.
+
+\`\`\`diff
+${DIFF}
+\`\`\`"
+
 (
-  echo "$DIFF" | claude \
-    --skill lore-validator \
+  echo "[$(date)] firing validator (diff $(echo "$DIFF" | wc -c) bytes)" >> .claude/lore-validator.log
+  claude \
+    --append-system-prompt "$SKILL" \
     --print \
-    --no-banner \
-    --quiet \
-    "Validate the following git diff against the Lore wiki. File at most one finding via lore.validate. Silence is preferred." \
+    "$PROMPT" \
     >> .claude/lore-validator.log 2>&1 || true
+  echo "[$(date)] validator done" >> .claude/lore-validator.log
 ) &
 
 exit 0
